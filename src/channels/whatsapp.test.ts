@@ -85,6 +85,10 @@ vi.mock('@whiskeysockets/baileys', () => {
       restartRequired: 515,
       forbidden: 403,
     },
+    fetchLatestWaWebVersion: vi.fn().mockResolvedValue({
+      version: [2, 3000, 1034662339],
+      isLatest: true,
+    }),
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
       state: {

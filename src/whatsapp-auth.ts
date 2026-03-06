@@ -15,6 +15,7 @@ import readline from 'readline';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  fetchLatestWaWebVersion,
   makeCacheableSignalKeyStore,
   useMultiFileAuthState,
 } from '@whiskeysockets/baileys';
@@ -54,6 +55,16 @@ async function connectSocket(phoneNumber?: string, isReconnect = false): Promise
     process.exit(0);
   }
 
+  const { version, isLatest, error } = await fetchLatestWaWebVersion();
+  if (!isLatest) {
+    console.warn(
+      `Warning: failed to fetch latest WhatsApp Web version, using fallback ${version.join('.')}.`,
+    );
+    if (error) {
+      console.warn(`  ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   const sock = makeWASocket({
     auth: {
       creds: state.creds,
@@ -62,6 +73,7 @@ async function connectSocket(phoneNumber?: string, isReconnect = false): Promise
     printQRInTerminal: false,
     logger,
     browser: Browsers.macOS('Chrome'),
+    version,
   });
 
   if (usePairingCode && phoneNumber && !state.creds.me) {
