@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import { PassThrough } from 'stream';
+import fs from 'fs';
+import { spawn } from 'child_process';
 
 // Sentinel markers must match container-runner.ts
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
@@ -41,6 +43,7 @@ vi.mock('fs', async () => {
       readdirSync: vi.fn(() => []),
       statSync: vi.fn(() => ({ isDirectory: () => false })),
       copyFileSync: vi.fn(),
+      renameSync: vi.fn(),
     },
   };
 });
@@ -68,6 +71,9 @@ function createFakeProcess() {
 }
 
 let fakeProc: ReturnType<typeof createFakeProcess>;
+const mockedFs = vi.mocked(fs);
+const mockedSpawn = vi.mocked(spawn);
+const mockedLogger = vi.mocked(logger);
 
 // Mock child_process.spawn
 vi.mock('child_process', async () => {
@@ -83,6 +89,7 @@ vi.mock('child_process', async () => {
 });
 
 import { runContainerAgent, ContainerOutput } from './container-runner.js';
+import { logger } from './logger.js';
 import type { RegisteredGroup } from './types.js';
 
 const testGroup: RegisteredGroup = {
@@ -108,6 +115,17 @@ describe('container-runner timeout behavior', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     fakeProc = createFakeProcess();
+    mockedFs.existsSync.mockImplementation(() => false);
+    mockedFs.mkdirSync.mockClear();
+    mockedFs.writeFileSync.mockClear();
+    mockedFs.renameSync.mockClear();
+    mockedFs.readdirSync.mockClear();
+    mockedFs.statSync.mockClear();
+    mockedFs.statSync.mockImplementation(
+      () => ({ isDirectory: () => false }) as ReturnType<typeof fs.statSync>,
+    );
+    mockedLogger.warn.mockClear();
+    mockedSpawn.mockClear();
   });
 
   afterEach(() => {
@@ -199,5 +217,98 @@ describe('container-runner timeout behavior', () => {
     const result = await resultPromise;
     expect(result.status).toBe('success');
     expect(result.newSessionId).toBe('session-456');
+  });
+
+  it('writes Qwen settings that only load QWEN.md', async () => {
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    expect(mockedFs.writeFileSync).toHaveBeenCalledWith(
+      '/tmp/nanoclaw-test-data/sessions/test-group/.qwen/settings.json',
+      expect.stringContaining('"fileName": "QWEN.md"'),
+    );
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('CLAUDE.md'),
+    );
+    expect(mockedFs.writeFileSync).not.toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('MEMORY.md'),
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('migrates MEMORY.md to QWEN.md when no QWEN.md exists', async () => {
+    mockedFs.existsSync.mockImplementation((target) =>
+      target === '/tmp/nanoclaw-test-groups/test-group/MEMORY.md',
+    );
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    expect(mockedFs.renameSync).toHaveBeenCalledWith(
+      '/tmp/nanoclaw-test-groups/test-group/MEMORY.md',
+      '/tmp/nanoclaw-test-groups/test-group/QWEN.md',
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('migrates CLAUDE.md to QWEN.md when no QWEN.md exists', async () => {
+    mockedFs.existsSync.mockImplementation((target) =>
+      target === '/tmp/nanoclaw-test-groups/test-group/CLAUDE.md',
+    );
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    expect(mockedFs.renameSync).toHaveBeenCalledWith(
+      '/tmp/nanoclaw-test-groups/test-group/CLAUDE.md',
+      '/tmp/nanoclaw-test-groups/test-group/QWEN.md',
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
+  });
+
+  it('warns and leaves legacy files in place when MEMORY.md and CLAUDE.md both exist', async () => {
+    mockedFs.existsSync.mockImplementation((target) =>
+      target === '/tmp/nanoclaw-test-groups/test-group/MEMORY.md'
+      || target === '/tmp/nanoclaw-test-groups/test-group/CLAUDE.md',
+    );
+
+    const resultPromise = runContainerAgent(
+      testGroup,
+      testInput,
+      () => {},
+    );
+
+    expect(mockedFs.renameSync).not.toHaveBeenCalled();
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      {
+        dir: '/tmp/nanoclaw-test-groups/test-group',
+        files: ['MEMORY.md', 'CLAUDE.md'],
+      },
+      'Multiple legacy context files found without QWEN.md; leaving them in place',
+    );
+
+    fakeProc.emit('close', 0);
+    await vi.advanceTimersByTimeAsync(10);
+    await resultPromise;
   });
 });

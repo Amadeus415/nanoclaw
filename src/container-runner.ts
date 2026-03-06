@@ -24,7 +24,8 @@ import { RegisteredGroup } from './types.js';
 // Sentinel markers for robust output parsing (must match agent-runner)
 const OUTPUT_START_MARKER = '---NANOCLAW_OUTPUT_START---';
 const OUTPUT_END_MARKER = '---NANOCLAW_OUTPUT_END---';
-const CONTEXT_FILE_NAMES = ['MEMORY.md', 'CLAUDE.md'];
+const QWEN_CONTEXT_FILE = 'QWEN.md';
+const LEGACY_CONTEXT_FILES = ['MEMORY.md', 'CLAUDE.md'] as const;
 
 export interface ContainerInput {
   prompt: string;
@@ -56,9 +57,14 @@ function buildVolumeMounts(
   const mounts: VolumeMount[] = [];
   const projectRoot = process.cwd();
   const groupDir = path.join(GROUPS_DIR, group.folder);
+  const globalDir = path.join(GROUPS_DIR, 'global');
   const includeDirectories: string[] = [];
 
-  migrateLegacyMemoryFile(groupDir);
+  migrateLegacyContextFile(projectRoot);
+  migrateLegacyContextFile(groupDir);
+  if (fs.existsSync(globalDir)) {
+    migrateLegacyContextFile(globalDir);
+  }
 
   if (isMain) {
     // Main gets the entire project root mounted
@@ -84,9 +90,7 @@ function buildVolumeMounts(
 
     // Global memory directory (read-only for non-main)
     // Only directory mounts are supported, not file mounts
-    const globalDir = path.join(GROUPS_DIR, 'global');
     if (fs.existsSync(globalDir)) {
-      migrateLegacyMemoryFile(globalDir);
       mounts.push({
         hostPath: globalDir,
         containerPath: '/workspace/global',
@@ -159,11 +163,26 @@ function buildVolumeMounts(
   return mounts;
 }
 
-function migrateLegacyMemoryFile(dir: string): void {
-  const legacyPath = path.join(dir, 'CLAUDE.md');
-  const memoryPath = path.join(dir, 'MEMORY.md');
-  if (!fs.existsSync(legacyPath) || fs.existsSync(memoryPath)) return;
-  fs.renameSync(legacyPath, memoryPath);
+function migrateLegacyContextFile(dir: string): void {
+  const qwenPath = path.join(dir, QWEN_CONTEXT_FILE);
+  if (fs.existsSync(qwenPath)) return;
+
+  const legacyPaths = LEGACY_CONTEXT_FILES.map((name) => path.join(dir, name));
+  const existingLegacy = legacyPaths.filter((legacyPath) => fs.existsSync(legacyPath));
+
+  if (existingLegacy.length === 0) return;
+  if (existingLegacy.length > 1) {
+    logger.warn(
+      {
+        dir,
+        files: existingLegacy.map((legacyPath) => path.basename(legacyPath)),
+      },
+      'Multiple legacy context files found without QWEN.md; leaving them in place',
+    );
+    return;
+  }
+
+  fs.renameSync(existingLegacy[0], qwenPath);
 }
 
 function writeQwenSettings(
@@ -175,7 +194,7 @@ function writeQwenSettings(
     JSON.stringify(
       {
         context: {
-          fileName: CONTEXT_FILE_NAMES,
+          fileName: QWEN_CONTEXT_FILE,
           importFormat: 'tree',
           includeDirectories,
           loadFromIncludeDirectories: includeDirectories.length > 0,
