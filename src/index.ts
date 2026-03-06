@@ -42,10 +42,10 @@ import { logger } from './logger.js';
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
 
-let lastTimestamp = '';
+let lastTimestamp = ''; //I've seen all messages up to this time
 let sessions: Record<string, string> = {};
 let registeredGroups: Record<string, RegisteredGroup> = {};
-let lastAgentTimestamp: Record<string, string> = {};
+let lastAgentTimestamp: Record<string, string> = {}; //I've processed messaged up to this time for this group
 let messageLoopRunning = false;
 
 let whatsapp: WhatsAppChannel;
@@ -403,7 +403,7 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
-async function main(): Promise<void> {
+async function main(): Promise<void> { // Returns a Empty Receipt -- This just runs forever - starts app
   ensureContainerSystemRunning();
   initDatabase();
   logger.info('Database initialized');
@@ -412,11 +412,11 @@ async function main(): Promise<void> {
   // Graceful shutdown handlers
   const shutdown = async (signal: string) => {
     logger.info({ signal }, 'Shutdown signal received');
-    await queue.shutdown(10000);
-    for (const ch of channels) await ch.disconnect();
-    process.exit(0);
+    await queue.shutdown(10000); // start shutting down the queue
+    for (const ch of channels) await ch.disconnect();// shutdown each whatsapp channel
+    process.exit(0); //exit
   };
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGTERM', () => shutdown('SIGTERM')); //run shutdown if process is closed
   process.on('SIGINT', () => shutdown('SIGINT'));
 
   // Channel callbacks (shared by all channels)
