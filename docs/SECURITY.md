@@ -4,116 +4,86 @@
 
 | Entity | Trust Level | Rationale |
 |--------|-------------|-----------|
-| Main group | Trusted | Private self-chat, admin control |
+| Main group | Trusted | Private admin/control chat |
 | Non-main groups | Untrusted | Other users may be malicious |
 | Container agents | Sandboxed | Isolated execution environment |
 | WhatsApp messages | User input | Potential prompt injection |
 
-## Security Boundaries
+## Primary Boundary
 
-### 1. Container Isolation (Primary Boundary)
+NanoClaw relies on container isolation rather than application-level permission prompts.
 
-Agents execute in containers (lightweight Linux VMs), providing:
-- **Process isolation** - Container processes cannot affect the host
-- **Filesystem isolation** - Only explicitly mounted directories are visible
-- **Non-root execution** - Runs as unprivileged `node` user (uid 1000)
-- **Ephemeral containers** - Fresh environment per invocation (`--rm`)
+- Agents only see explicitly mounted paths.
+- The container runs as the built-in `node` user.
+- Containers are ephemeral and removed after execution.
+- Main and non-main groups get different mounts.
 
-This is the primary security boundary. Rather than relying on application-level permission checks, the attack surface is limited by what's mounted.
+## Filesystem Isolation
 
-### 2. Mount Security
+Per group:
 
-**External Allowlist** - Mount permissions stored at `~/.config/nanoclaw/mount-allowlist.json`, which is:
-- Outside project root
-- Never mounted into containers
-- Cannot be modified by agents
+- `/workspace/group` maps to that group folder and is writable.
+- `/home/node/.qwen` maps to `data/sessions/{group}/.qwen/`.
+- `/workspace/ipc` maps to the group-specific IPC directory.
 
-**Default Blocked Patterns:**
-```
-.ssh, .gnupg, .aws, .azure, .gcloud, .kube, .docker,
-credentials, .env, .netrc, .npmrc, id_rsa, id_ed25519,
-private_key, .secret
-```
+Non-main groups also get:
 
-**Protections:**
-- Symlink resolution before validation (prevents traversal attacks)
-- Container path validation (rejects `..` and absolute paths)
-- `nonMainReadOnly` option forces read-only for non-main groups
+- `/workspace/global` mapped read-only from `groups/global/`.
 
-### 3. Session Isolation
+Main group also gets:
 
-Each group has isolated Claude sessions at `data/sessions/{group}/.claude/`:
-- Groups cannot see other groups' conversation history
-- Session data includes full message history and file contents read
-- Prevents cross-group information disclosure
+- `/workspace/project` mapped read-write to the project root.
 
-### 4. IPC Authorization
+## Memory And Session Isolation
 
-Messages and task operations are verified against group identity:
+- Durable memory lives in `groups/global/QWEN.md` and `groups/{group}/QWEN.md`.
+- Provider-owned session state lives in `data/sessions/{group}/.qwen/`.
+- Groups do not share `.qwen` state.
+- Legacy `CLAUDE.md` and `MEMORY.md` files are migrated to `QWEN.md` only when there is a single clear source file.
 
-| Operation | Main Group | Non-Main Group |
-|-----------|------------|----------------|
-| Send message to own chat | ✓ | ✓ |
-| Send message to other chats | ✓ | ✗ |
-| Schedule task for self | ✓ | ✓ |
-| Schedule task for others | ✓ | ✗ |
-| View all tasks | ✓ | Own only |
-| Manage other groups | ✓ | ✗ |
+## Credential Handling
 
-### 5. Credential Handling
+Only a small allowlist of provider variables is passed into the container:
 
-**Mounted Credentials:**
-- Claude auth tokens (filtered from `.env`, read-only)
-
-**NOT Mounted:**
-- WhatsApp session (`store/auth/`) - host only
-- Mount allowlist - external, never mounted
-- Any credentials matching blocked patterns
-
-**Credential Filtering:**
-Only these environment variables are exposed to containers:
-```typescript
-const allowedVars = ['CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY'];
+```ts
+[
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_MODEL',
+  'QWEN_MODEL',
+]
 ```
 
-> **Note:** Anthropic credentials are mounted so that Claude Code can authenticate when the agent runs. However, this means the agent itself can discover these credentials via Bash or file operations. Ideally, Claude Code would authenticate without exposing credentials to the agent's execution environment, but I couldn't figure this out. **PRs welcome** if you have ideas for credential isolation.
+Not mounted into containers:
 
-## Privilege Comparison
+- WhatsApp auth state in `store/auth/`
+- Mount allowlist at `~/.config/nanoclaw/mount-allowlist.json`
+- Other `.env` values
 
-| Capability | Main Group | Non-Main Group |
-|------------|------------|----------------|
-| Project root access | `/workspace/project` (rw) | None |
-| Group folder | `/workspace/group` (rw) | `/workspace/group` (rw) |
-| Global memory | Implicit via project | `/workspace/global` (ro) |
-| Additional mounts | Configurable | Read-only unless allowed |
-| Network access | Unrestricted | Unrestricted |
-| MCP tools | All | All |
+The current model auth path is OpenAI-compatible API key auth.
 
-## Security Architecture Diagram
+## IPC Authorization
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                        UNTRUSTED ZONE                             │
-│  WhatsApp Messages (potentially malicious)                        │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Trigger check, input escaping
-┌──────────────────────────────────────────────────────────────────┐
-│                     HOST PROCESS (TRUSTED)                        │
-│  • Message routing                                                │
-│  • IPC authorization                                              │
-│  • Mount validation (external allowlist)                          │
-│  • Container lifecycle                                            │
-│  • Credential filtering                                           │
-└────────────────────────────────┬─────────────────────────────────┘
-                                 │
-                                 ▼ Explicit mounts only
-┌──────────────────────────────────────────────────────────────────┐
-│                CONTAINER (ISOLATED/SANDBOXED)                     │
-│  • Agent execution                                                │
-│  • Bash commands (sandboxed)                                      │
-│  • File operations (limited to mounts)                            │
-│  • Network access (unrestricted)                                  │
-│  • Cannot modify security config                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+The host process enforces chat and group ownership when applying IPC requests:
+
+- Non-main groups can message only their own chat.
+- Non-main groups can schedule only for their own group.
+- Main group can register groups and target other groups.
+- Task visibility is group-scoped except for main.
+
+## Mount Security
+
+Additional mounts are validated before container launch:
+
+- symlinks are resolved before validation
+- container paths cannot escape `/workspace/extra/`
+- sensitive host paths are blocked
+- read-only enforcement can be applied for non-main groups
+
+## Practical Risk Notes
+
+- Agents still have network access from inside the container.
+- Sandbox shell access means the model can read anything inside mounted paths.
+- Main group is effectively an admin surface because it can access the project root.
+
+That is intentional. The safety model is “small codebase plus strict mounts,” not “powerful host access with soft prompts.”
