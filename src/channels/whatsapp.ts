@@ -20,6 +20,7 @@ import { logger } from '../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
 const GROUP_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const WHATSAPP_REAUTH_REASONS = new Set([DisconnectReason.loggedOut, 403, 405, 419]);
 
 export interface WhatsAppChannelOpts {
   onMessage: OnInboundMessage;
@@ -81,7 +82,8 @@ export class WhatsAppChannel implements Channel {
       if (connection === 'close') {
         this.connected = false;
         const reason = (lastDisconnect?.error as any)?.output?.statusCode;
-        const shouldReconnect = reason !== DisconnectReason.loggedOut;
+        const needsReauth = reason != null && WHATSAPP_REAUTH_REASONS.has(reason);
+        const shouldReconnect = !needsReauth;
         logger.info({ reason, shouldReconnect, queuedMessages: this.outgoingQueue.length }, 'Connection closed');
 
         if (shouldReconnect) {
@@ -95,7 +97,10 @@ export class WhatsAppChannel implements Channel {
             }, 5000);
           });
         } else {
-          logger.info('Logged out. Run /setup to re-authenticate.');
+          logger.error(
+            { reason },
+            'WhatsApp session rejected. Delete store/auth and run `npm run auth` again.',
+          );
           process.exit(0);
         }
       } else if (connection === 'open') {

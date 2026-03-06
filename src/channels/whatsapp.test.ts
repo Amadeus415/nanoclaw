@@ -83,6 +83,7 @@ vi.mock('@whiskeysockets/baileys', () => {
       connectionReplaced: 440,
       timedOut: 408,
       restartRequired: 515,
+      forbidden: 403,
     },
     makeCacheableSignalKeyStore: vi.fn((keys: unknown) => keys),
     useMultiFileAuthState: vi.fn().mockResolvedValue({
@@ -274,6 +275,21 @@ describe('WhatsAppChannel', () => {
 
       // Disconnect with loggedOut reason (401)
       triggerDisconnect(401);
+
+      expect(channel.isConnected()).toBe(false);
+      expect(mockExit).toHaveBeenCalledWith(0);
+      mockExit.mockRestore();
+    });
+
+    it('exits on 405 session rejection instead of reconnecting', async () => {
+      const mockExit = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
+
+      const opts = createTestOpts();
+      const channel = new WhatsAppChannel(opts);
+
+      await connectChannel(channel);
+
+      triggerDisconnect(405);
 
       expect(channel.isConnected()).toBe(false);
       expect(mockExit).toHaveBeenCalledWith(0);

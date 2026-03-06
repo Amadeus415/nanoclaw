@@ -22,6 +22,7 @@ import makeWASocket, {
 const AUTH_DIR = './store/auth';
 const QR_FILE = './store/qr-data.txt';
 const STATUS_FILE = './store/auth-status.txt';
+const WHATSAPP_REAUTH_REASONS = new Set([DisconnectReason.loggedOut, 403, 405, 419]);
 
 const logger = pino({
   level: 'warn', // Quiet logging - only show errors
@@ -98,9 +99,10 @@ async function connectSocket(phoneNumber?: string, isReconnect = false): Promise
     if (connection === 'close') {
       const reason = (lastDisconnect?.error as any)?.output?.statusCode;
 
-      if (reason === DisconnectReason.loggedOut) {
-        fs.writeFileSync(STATUS_FILE, 'failed:logged_out');
-        console.log('\n✗ Logged out. Delete store/auth and try again.');
+      if (reason != null && WHATSAPP_REAUTH_REASONS.has(reason)) {
+        fs.writeFileSync(STATUS_FILE, `failed:${reason}`);
+        console.log(`\n✗ WhatsApp rejected the stored session (reason ${reason}).`);
+        console.log('  Delete store/auth and run npm run auth again.');
         process.exit(1);
       } else if (reason === DisconnectReason.timedOut) {
         fs.writeFileSync(STATUS_FILE, 'failed:qr_timeout');
