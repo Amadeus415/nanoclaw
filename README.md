@@ -1,12 +1,16 @@
-# NanoClaw
+# nanoclaw-qwen
 
 Personal Qwen assistant for WhatsApp.
+
+Forked from [NanoClaw](https://github.com/qwibitai/nanoclaw) and restructured to use Qwen.
+
+This repo now contains only the runnable Qwen app. The old skills/customization system has been removed from the main repo and should live separately if it is revived.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/qwibitai/nanoclaw.git
-cd nanoclaw
+git clone https://github.com/Amadeus415/nanoclaw-qwen.git
+cd nanoclaw-qwen
 npm install
 ./container/build.sh
 npm run auth

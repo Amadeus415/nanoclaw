@@ -1,14 +1,14 @@
 ## Type of Change
 
-- [ ] **Skill** - adds a new skill in `.claude/skills/`
-- [ ] **Fix** - bug fix or security fix to source code
-- [ ] **Simplification** - reduces or simplifies source code
+- [ ] **Runtime Fix** - bug fix or security fix to the app/runtime
+- [ ] **Simplification** - reduces or simplifies code or operations
+- [ ] **Docs** - updates setup, runtime, or operator documentation
+- [ ] **Tests / CI** - updates verification or automation
 
 ## Description
 
+## Verification
 
-## For Skills
-
-- [ ] I have not made any changes to source code
-- [ ] My skill contains instructions for Claude to follow (not pre-built code)
-- [ ] I tested this skill on a fresh clone
+- [ ] `npm run build`
+- [ ] `npm test`
+- [ ] Docs updated if setup or behavior changed

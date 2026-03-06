@@ -2,6 +2,8 @@
 
 面向 WhatsApp 的个人 Qwen 助手。
 
+这个仓库现在只包含可运行的 Qwen 应用。旧的 skills / customization 系统已经从主仓库移除；如果以后恢复，应放到单独的仓库里。
+
 ## 快速开始
 
 ```bash

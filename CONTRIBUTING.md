@@ -1,23 +1,35 @@
 # Contributing
 
-## Source Code Changes
+NanoClaw is the runnable Qwen/WhatsApp app. Contributions should stay focused on the current runtime, its tests, and its operational docs.
 
-**Accepted:** Bug fixes, security fixes, simplifications, reducing code.
+## Good Changes
 
-**Not accepted:** Features, capabilities, compatibility, enhancements. These should be skills.
+- Bug fixes
+- Security fixes
+- Simplifications and refactors that reduce operational complexity
+- Runtime-focused improvements that fit the current product scope
+- Test coverage and documentation updates for the live Qwen harness
 
-## Skills
+## Out Of Scope Here
 
-A [skill](https://code.claude.com/docs/en/skills) is a markdown file in `.claude/skills/` that teaches Claude Code how to transform a NanoClaw installation.
+- The old skills/customization system
+- Provider-agnostic template tooling for downstream forks
+- Archived Claude-specific workflows
 
-A PR that contributes a skill should not modify any source files.
+Customization tooling no longer lives in this repo. If that work returns, it should live in a separate customizations repo.
 
-Your skill should contain the **instructions** Claude follows to add the feature—not pre-built code. See `/add-telegram` for a good example.
+## Expectations
 
-### Why?
+- Keep changes scoped and reviewable.
+- Update tests when behavior changes.
+- Update docs when setup, runtime behavior, or operator workflows change.
+- Avoid unrelated cleanup in the same change.
 
-Every user should have clean and minimal code that does exactly what they need. Skills let users selectively add features to their fork without inheriting code for features they don't want.
+## Verification
 
-### Testing
+Before opening a PR, run:
 
-Test your skill by running it on a fresh clone before submitting.
+```bash
+npm run build
+npm test
+```
