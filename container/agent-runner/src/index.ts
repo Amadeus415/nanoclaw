@@ -6,6 +6,7 @@
  *   Stdin: Full ContainerInput JSON (read until EOF)
  *   IPC:   Follow-up messages written as JSON files to /workspace/ipc/input/
  *          Files: {type:"message", text:"..."}.json — polled and consumed
+ *          between query rounds
  *          Sentinel: /workspace/ipc/input/_close — signals session end
  *
  * Stdout protocol:
@@ -17,12 +18,7 @@
 import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import {
-  query,
-  type CanUseTool,
-  type SDKUserMessage,
-  type ToolInput,
-} from '@qwen-code/sdk';
+import { query, type CanUseTool, type ToolInput } from '@qwen-code/sdk';
 import { fileURLToPath } from 'url';
 
 interface ContainerInput {
@@ -74,42 +70,6 @@ const SECRET_ENV_VARS = [
   'OPENAI_MODEL',
   'QWEN_MODEL',
 ];
-
-class MessageStream {
-  private queue: SDKUserMessage[] = [];
-  private waiting: (() => void) | null = null;
-  private done = false;
-
-  constructor(private readonly sessionId: string) {}
-
-  push(text: string): void {
-    this.queue.push({
-      type: 'user',
-      message: { role: 'user', content: text },
-      parent_tool_use_id: null,
-      session_id: this.sessionId,
-    });
-    this.waiting?.();
-  }
-
-  end(): void {
-    this.done = true;
-    this.waiting?.();
-  }
-
-  async *[Symbol.asyncIterator](): AsyncGenerator<SDKUserMessage> {
-    while (true) {
-      while (this.queue.length > 0) {
-        yield this.queue.shift()!;
-      }
-      if (this.done) return;
-      await new Promise<void>((resolve) => {
-        this.waiting = resolve;
-      });
-      this.waiting = null;
-    }
-  }
-}
 
 async function readStdin(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -234,30 +194,7 @@ async function runQuery(
   mcpServerPath: string,
   containerInput: ContainerInput,
   sdkEnv: Record<string, string | undefined>,
-): Promise<{ closedDuringQuery: boolean }> {
-  const stream = new MessageStream(sessionId);
-  stream.push(prompt);
-
-  let ipcPolling = true;
-  let closedDuringQuery = false;
-  const pollIpcDuringQuery = () => {
-    if (!ipcPolling) return;
-    if (shouldClose()) {
-      log('Close sentinel detected during query, ending stream');
-      closedDuringQuery = true;
-      stream.end();
-      ipcPolling = false;
-      return;
-    }
-    const messages = drainIpcInput();
-    for (const text of messages) {
-      log(`Piping IPC message into active query (${text.length} chars)`);
-      stream.push(text);
-    }
-    setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
-  };
-  setTimeout(pollIpcDuringQuery, IPC_POLL_MS);
-
+): Promise<void> {
   let messageCount = 0;
   let resultCount = 0;
   const logLevel = process.env.LOG_LEVEL === 'debug' || process.env.LOG_LEVEL === 'trace'
@@ -265,7 +202,7 @@ async function runQuery(
     : 'error';
 
   for await (const message of query({
-    prompt: stream,
+    prompt,
     options: {
       cwd: '/workspace/group',
       model: getModel(sdkEnv),
@@ -333,9 +270,7 @@ async function runQuery(
     }
   }
 
-  ipcPolling = false;
-  log(`Query done. Messages: ${messageCount}, results: ${resultCount}, closedDuringQuery: ${closedDuringQuery}`);
-  return { closedDuringQuery };
+  log(`Query done. Messages: ${messageCount}, results: ${resultCount}`);
 }
 
 async function main(): Promise<void> {
@@ -395,9 +330,8 @@ async function main(): Promise<void> {
     while (true) {
       log(`Starting query (session: ${sessionId}, resume: ${resume})...`);
 
-      let queryResult: { closedDuringQuery: boolean };
       try {
-        queryResult = await runQuery(
+        await runQuery(
           prompt,
           sessionId,
           resume,
@@ -418,11 +352,6 @@ async function main(): Promise<void> {
         throw err;
       }
       resume = true;
-
-      if (queryResult.closedDuringQuery) {
-        log('Close sentinel consumed during query, exiting');
-        break;
-      }
 
       writeOutput({ status: 'success', result: null, newSessionId: sessionId });
 

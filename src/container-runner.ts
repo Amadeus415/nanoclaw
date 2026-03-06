@@ -216,15 +216,9 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
   // Without this, the container defaults to UTC and scheduled tasks fire at wrong times.
   args.push('-e', `TZ=${TIMEZONE}`);
 
-  // Run as host user so bind-mounted files are accessible.
-  // Skip when running as root (uid 0), as the container's node user (uid 1000),
-  // or when getuid is unavailable (native Windows without WSL).
-  const hostUid = process.getuid?.();
-  const hostGid = process.getgid?.();
-  if (hostUid != null && hostUid !== 0 && hostUid !== 1000) {
-    args.push('--user', `${hostUid}:${hostGid}`);
-    args.push('-e', 'HOME=/home/node');
-  }
+  // Always run as the image's built-in node user.
+  // Qwen Code reads os.userInfo(), which crashes for arbitrary numeric UIDs
+  // that do not have passwd entries inside the container.
 
   for (const mount of mounts) {
     if (mount.readonly) {
